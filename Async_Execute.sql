@@ -1,0 +1,196 @@
+IF SCHEMA_ID('Async') IS NULL EXEC ('CREATE SCHEMA [Async] AUTHORIZATION [dbo]');
+GO
+
+CREATE OR ALTER PROC [Async].[p_DeleteJobs] 
+	@JobNamePrefix sysname = 'Temporary Session Job - ' 
+as
+	/*
+		EXEC [Async].[p_DeleteJobs];
+	*/
+	set nocount, xact_abort on;
+
+	-- Build the set of delete instructions.
+	-- Cast as max so it can hadle lots of jobs.
+	declare @JobDeleteStatements nvarchar(max) = (
+		select STRING_AGG(cast('EXEC msdb.dbo.sp_delete_job @job_name = ''' + name + ''';' as varchar(max)), ' ')
+		from msdb.dbo.sysjobs
+		where name like @JobNamePrefix + '%'
+	);
+
+	-- Execute all the instructions at once.
+	exec (@JobDeleteStatements);
+go
+
+CREATE OR ALTER proc [Async].[p_CountJobsRunning] 
+	@JobNamePrefix sysname = 'Temporary Session Job - ' 
+as
+	/*
+		The key to doing this correctly is the session_id. It has to be the latest.
+
+		declare @JobsRunningCount int = 1;
+		while @JobsRunningCount > 0 begin;
+			WAITFOR DELAY '00:00:05.000'; -- Wait 5 seconds.
+			EXEC @JobsRunningCount = [Async].[p_CountJobsRunning];
+		end;
+	*/
+	set nocount, xact_abort on;
+
+	return (
+		SELECT COUNT(*)
+		FROM msdb.dbo.sysjobactivity a
+		JOIN msdb.dbo.sysjobs j ON a.job_id = j.job_id
+		WHERE j.name like '' + '%'
+			and a.session_id = (SELECT MAX(session_id) FROM msdb.dbo.syssessions)
+			AND a.start_execution_date IS NOT NULL
+			AND a.stop_execution_date IS NULL
+	);
+GO
+
+CREATE or alter function [Async].[f_SessionMessage] (
+	@JobNamePrefix sysname = 'Temporary Session Job - '
+) 
+returns table as return (
+	/*
+		SELECT * FROM [Async].[f_SessionMessage](DEFAULT);
+
+		SELECT * 
+		FROM [Async].[f_SessionMessage](DEFAULT) m
+		cross apply string_split(m.message, '~') v
+		where TRY_CAST(v.value as int) is not null;
+	*/
+	select trim(substring(
+			j.name, 
+			len(@JobNamePrefix) + 1, 
+			99
+		)) as SessionNumber
+		, h.sql_severity
+		, h.message
+		, IIF(
+			h.run_status = 0, 
+			'Failed', 
+			choose(h.run_status, 'Succeeded', 'Retry', 'Canceled', 'In progress')
+		) as RunStatus
+		, MSDB.DBO.AGENT_DATETIME(h.run_date, h.run_time) as StartTime
+		, h.run_duration / 10000 * 3600 
+			+ h.run_duration % 10000 / 100 
+			* 60 + h.run_duration % 100 as RunSeconds
+	from msdb.dbo.sysjobs j
+	join msdb.dbo.sysjobhistory h on h.job_id = j.job_id
+	where j.name like @JobNamePrefix + '%'
+		and step_id = 1
+);
+go
+
+create or alter proc [Async].[p_Execute]
+	@SessionCount tinyint, -- Number of jobs to create.
+	@CommandText nvarchar(max), -- Include [SessionNumber] if you want.
+	@CleanUpFlag bit = 0 -- If 1, delete the jobs at the end.
+as
+	/*
+		Creates and executes jobs that all run at the same time.
+		That's because each job runs in it's own session.
+		The sp_start_job command returns imediately event though the job is still running.
+		This proc does not complete until all the jobs have completed.
+
+		@SessionCount - is the number of jobs you want.
+		@CommandText - Is the SQL instructions that each job will execute.
+			That command tect can contain "[SessionNumber]".
+			It gets replaced with a number for each job.
+		@CleanUpFlag - 1 means all the jobs get deleted at the end.
+
+		EXEC [Async].[p_Execute] 5, 'WAITFOR DELAY ''00:01:00.000'';', 0; -- Wait 1 min.
+
+		EXEC [Async].[p_Execute] 100, 'PRINT ''~[SessionNumber]~'';', 0; -- See session number in messages.
+
+		SELECT * 
+		FROM [Async].[f_SessionMessage](NULL) m
+		cross apply string_split(m.message, '~') v
+		where TRY_CAST(v.value as int) is not null;
+	*/
+	set nocount, xact_abort on;
+
+	declare @JobNamePrefix sysname = 'Temporary Session Job - ';
+	declare @JobsRunningCount tinyint;
+
+	print concat_ws(' - ', sysdatetime(), 'Check if running and delete jobs.');
+
+	-- Check if any of the jobs like this are still running.
+	EXEC @JobsRunningCount = [Async].[p_CountJobsRunning] @JobNamePrefix = @JobNamePrefix;
+
+	-- Error out if any are still running.
+	if @JobsRunningCount <> 0 throw 50000, 'A job with a name like this is still running.', 1;
+
+	-- Delete these jobs.
+	EXEC [Async].[p_DeleteJobs] @JobNamePrefix = @JobNamePrefix;
+
+	declare @DatabaseName sysname = db_name();
+	declare @SessionNumber tinyint;
+	declare @JobName sysname;
+	declare @Command nvarchar(max);
+
+	print concat_ws(' - ', sysdatetime(), 'Create a job for each session.');
+
+	-- Starting at zero is fine since it gets incremented at the top of the loop.
+	set @SessionNumber = 0;
+
+	-- Using less-than is fine since ... increment.
+	while @SessionNumber < @SessionCount begin;
+		set @SessionNumber += 1;
+
+		-- Each job gets its own name.
+		set @JobName = concat(@JobNamePrefix, @SessionNumber);
+
+		-- The command might have the [SessionNumber] placeholder in it.
+		set @Command = replace(@CommandText, '[SessionNumber]', @SessionNumber);
+
+		-- create the job.
+		EXEC msdb.dbo.sp_add_job 
+			@job_name = @JobName;
+
+		-- Put SQL commands into a single step inside of that job.
+		EXEC msdb.dbo.sp_add_jobstep 
+			@job_name = @JobName, 
+			@step_name = N'Single Job Step', 
+			@Command = @Command, 
+			@database_name = @DatabaseName;
+
+		-- Creating a job does not set the target server to the obvious choice.
+		EXEC msdb.dbo.sp_add_jobserver 
+			@job_name = @JobName, 
+			@server_name = N'(local)';
+	end; -- End while @SessionNumber <= @SessionCount
+
+	-- Jobs are started in a separate loop so that they start closer together.
+	print concat_ws(' - ', sysdatetime(), 'Run the job for each session.');
+
+	set @SessionNumber = 0;
+
+	while @SessionNumber < @SessionCount begin;
+		set @SessionNumber += 1;
+
+		set @JobName = concat(@JobNamePrefix, @SessionNumber);
+
+		-- Start it asychronusly.
+		EXEC msdb.dbo.sp_start_job @job_name = @JobName;
+	end; -- End while @SessionNumber <= @SessionCount
+
+	print concat_ws(' - ', sysdatetime(), 'Wait for all the jobs to complete.');
+
+	-- Wait until all of the jobs are done.
+	set @JobsRunningCount = 255;
+
+	-- Wait until all of the jobs are done.
+	while @JobsRunningCount > 0 begin;
+		WAITFOR DELAY '00:00:05.000'; -- Wait 5 seconds.
+
+		-- Check again.
+		EXEC @JobsRunningCount = [Async].[p_CountJobsRunning] @JobNamePrefix = @JobNamePrefix;
+	end;
+
+	-- Delete the jobs maybe.
+	if @CleanUpFlag = 1 EXEC [Async].[p_DeleteJobs] @JobNamePrefix = @JobNamePrefix;
+
+	print concat_ws(' - ', sysdatetime(), 'All done.');
+go
+
+
