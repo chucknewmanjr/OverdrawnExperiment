@@ -23,7 +23,7 @@ begin tran;
 
 declare @Withdrawal decimal(19,2) = (
 	select Amount * 0.6
-	from [dbo].[Balance] with (holdlock, xlock)
+	from [dbo].[Balance]
 	where UserID = @UserID
 );
 
