@@ -14,6 +14,14 @@ go
 insert into [dbo].[Balance] (Amount) values (100000000);
 go 5 -- <== Do the insert many times.
 
+/*
+	ALTER DATABASE OverdrawnExperiment SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+	ALTER DATABASE OverdrawnExperiment SET READ_COMMITTED_SNAPSHOT ON;
+	ALTER DATABASE OverdrawnExperiment SET MULTI_USER;
+--*/
+set transaction isolation level read committed; -- with SNAPSHOT
+go
+
 declare @UserID int = (
 	select CHECKSUM(newid()) % MAX(UserID) + 1
 	from [dbo].[Balance]
@@ -23,7 +31,7 @@ begin tran;
 
 declare @Withdrawal decimal(19,2) = (
 	select Amount * 0.6
-	from [dbo].[Balance] with (holdlock, xlock)
+	from [dbo].[Balance]
 	where UserID = @UserID
 );
 

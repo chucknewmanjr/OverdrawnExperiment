@@ -39,11 +39,9 @@ create or alter proc [dbo].[p_Withdraw] as
 
 			declare @Withdrawal decimal(19,2) = (
 				select Amount * 0.6
-				from [dbo].[Balance]
+				from [dbo].[Balance] with (updlock)
 				where UserID = @UserID
 			);
-
-			--waitfor delay '00:00:00.100';
 
 			update [dbo].[Balance]
 			set Amount -= @Withdrawal
@@ -66,14 +64,12 @@ create or alter proc [dbo].[p_Withdraw] as
 	end;
 go
 
-EXEC [Async].[p_Execute] 2, 'EXEC [dbo].[p_Withdraw];', 0; 
+EXEC [Async].[p_Execute] 10, 'EXEC [dbo].[p_Withdraw];', 0; 
 
 select * from [Async].[f_SessionMessage](default) order by 1;
 
 select Amount
 	, count(*) as [RowCount]
-	--, MIN(UserID) as MinUserID
-	--, MAX(UserID) as MaxUserID
 from [dbo].[Balance] 
 group by Amount 
 order by Amount;
