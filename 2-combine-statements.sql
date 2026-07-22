@@ -27,9 +27,9 @@ declare @UserID int = (
 	from [dbo].[Balance]
 );
 
-update [dbo].[Balance]
-set Amount -= Amount * 0.6
-where UserID = @UserID;
+UPDATE [dbo].[Balance]
+SET Amount -= Amount * 0.6
+WHERE UserID = @UserID;
 
 if (
 	select Amount

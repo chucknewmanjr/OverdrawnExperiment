@@ -23,6 +23,8 @@ create or alter proc [dbo].[p_Withdraw] as
 	*/
 	set nocount, xact_abort on;
 
+	--set transaction isolation level repeatable read;
+
 	declare @ThisLoop int = 0;
 
 	while @ThisLoop < 1000 begin;
@@ -65,6 +67,7 @@ create or alter proc [dbo].[p_Withdraw] as
 go
 
 EXEC [Async].[p_Execute] 10, 'EXEC [dbo].[p_Withdraw];', 0; 
+--EXEC [dbo].[p_Withdraw];
 
 select * from [Async].[f_SessionMessage](default) order by 1;
 

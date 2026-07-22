@@ -27,19 +27,19 @@ declare @UserID int = (
 	from [dbo].[Balance]
 );
 
-begin tran;
+BEGIN TRAN;
 
-declare @Withdrawal decimal(19,2) = (
-	select Amount * 0.6
-	from [dbo].[Balance]
-	where UserID = @UserID
+DECLARE @Withdrawal decimal(19,2) = (
+	SELECT Amount * 0.6
+	FROM [dbo].[Balance]
+	WHERE UserID = @UserID
 );
 
-update [dbo].[Balance]
-set Amount -= @Withdrawal
-where UserID = @UserID;
+UPDATE [dbo].[Balance]
+SET Amount -= @Withdrawal
+WHERE UserID = @UserID;
 
-commit;
+COMMIT;
 
 if (
 	select Amount

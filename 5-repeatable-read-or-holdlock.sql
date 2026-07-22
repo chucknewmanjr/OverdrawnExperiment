@@ -14,27 +14,27 @@ go
 insert into [dbo].[Balance] (Amount) values (100000000);
 go 5 -- <== Do the insert many times.
 
-set transaction isolation level repeatable read;
-go
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+GO
 
 declare @UserID int = (
 	select CHECKSUM(newid()) % MAX(UserID) + 1
 	from [dbo].[Balance]
 );
 
-begin tran;
+BEGIN TRAN;
 
-declare @Withdrawal decimal(19,2) = (
-	select Amount * 0.6
-	from [dbo].[Balance]
-	where UserID = @UserID
+DECLARE @Withdrawal decimal(19,2) = (
+	SELECT Amount * 0.6
+	FROM [dbo].[Balance]
+	WHERE UserID = @UserID
 );
 
-update [dbo].[Balance]
-set Amount -= @Withdrawal
-where UserID = @UserID;
+UPDATE [dbo].[Balance]
+SET Amount -= @Withdrawal
+WHERE UserID = @UserID;
 
-commit;
+COMMIT;
 
 if (
 	select Amount
