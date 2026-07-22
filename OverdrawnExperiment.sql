@@ -6,7 +6,7 @@ go
 
 create table [dbo].[Balance] (
 	UserID int not null identity primary key clustered,
-	Amount decimal(8,2) not null,
+	Amount decimal(19,2) not null,
 );
 go
 
@@ -14,8 +14,8 @@ set nocount on;
 go
 
 insert into [dbo].[Balance] (Amount) 
-values (100000);
-go 100 -- <== Do the insert many times.
+values (100000000);
+go 5 -- <== Do the insert many times.
 
 create or alter proc [dbo].[p_Withdraw] as
 	/*
@@ -25,7 +25,7 @@ create or alter proc [dbo].[p_Withdraw] as
 
 	declare @ThisLoop int = 0;
 
-	while @ThisLoop < 100 begin;
+	while @ThisLoop < 1000 begin;
 		set @ThisLoop += 1;
 
 		declare @UserID int = (
@@ -37,8 +37,8 @@ create or alter proc [dbo].[p_Withdraw] as
 
 			begin tran;
 
-			declare @Amount decimal(8,2) = (
-				select Amount * 0.4
+			declare @Withdrawal decimal(19,2) = (
+				select Amount * 0.6
 				from [dbo].[Balance]
 				where UserID = @UserID
 			);
@@ -46,31 +46,27 @@ create or alter proc [dbo].[p_Withdraw] as
 			--waitfor delay '00:00:00.100';
 
 			update [dbo].[Balance]
-			set Amount = @Amount
+			set Amount -= @Withdrawal
 			where UserID = @UserID;
 
 			if (
 				select Amount
 				from [dbo].[Balance]
 				where UserID = @UserID
-			) < 0 begin;
-				rollback;
-
+			) < 0
 				throw 50000, 'Account overdrawn.', 1;
-			end;
 
 			commit;
 		end try
 		begin catch;
-			rollback;
+			if XACT_STATE() <> 0 rollback;
 
 			throw; -- Rethrow the error.
 		end catch;
-
 	end;
 go
 
-EXEC [Async].[p_Execute] 100, 'EXEC [dbo].[p_Withdraw];', 0; 
+EXEC [Async].[p_Execute] 2, 'EXEC [dbo].[p_Withdraw];', 0; 
 
 select * from [Async].[f_SessionMessage](default) order by 1;
 
