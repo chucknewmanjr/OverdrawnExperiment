@@ -193,4 +193,26 @@ as
 	print concat_ws(' - ', sysdatetime(), 'All done.');
 go
 
+create or alter proc [dbo].[p_GetTransactionIsolationLevel] as
+	/*
+		EXEC [dbo].[p_GetTransactionIsolationLevel];
+	*/
+	set nocount, xact_abort on;
+
+	create table #UserOptions (
+		SetOption sysname, 
+		isolation_level sysname
+	);
+
+	insert #UserOptions exec('DBCC USEROPTIONS;');
+
+	select uo.isolation_level
+		, db.is_read_committed_snapshot_on
+		, db.snapshot_isolation_state
+	from #UserOptions uo
+	cross join sys.databases db
+	where uo.SetOption = 'isolation level'
+		and db.database_id = db_id();
+go
+
 
