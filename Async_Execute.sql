@@ -58,18 +58,18 @@ returns table as return (
 		cross apply string_split(m.message, '~') v
 		where TRY_CAST(v.value as int) is not null;
 	*/
-	select trim(substring(
+	select cast(trim(substring(
 			j.name, 
 			len(@JobNamePrefix) + 1, 
 			99
-		)) as SessionNumber
-		, h.sql_severity
-		, h.message
+		)) as int) as SessionNumber
 		, IIF(
 			h.run_status = 0, 
 			'Failed', 
 			choose(h.run_status, 'Succeeded', 'Retry', 'Canceled', 'In progress')
 		) as RunStatus
+		, h.sql_severity
+		, h.message
 		, MSDB.DBO.AGENT_DATETIME(h.run_date, h.run_time) as StartTime
 		, h.run_duration / 10000 * 3600 
 			+ h.run_duration % 10000 / 100 
